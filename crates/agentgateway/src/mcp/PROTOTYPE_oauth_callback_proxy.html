@@ -34,6 +34,7 @@
 <main>
 <h1>MCP login through the gateway: callback proxy (prototype)</h1>
 <p class="intro"><b>Question:</b> if agentgateway proxies the whole authorization round trip (<code>/authorize</code> → Keycloak → <em>gateway</em> <code>/callback</code> → client, plus <code>/token</code>), can it stay stateless, make RFC 9207 <code>iss</code> checks pass, and avoid turning into an open redirector or code-theft vector? Option 1 from <a href="https://github.com/nissessenap/agentgateway/issues/1">issue #1</a>. Pick a scenario tab or click freely. Everything is simulated in the page; nothing hits a network.</p>
+<p class="intro"><b>Deployment:</b> "Gateway" below is agentgateway itself, not a separate service. The new endpoints (<code>…/authorize</code>, <code>…/callback</code>, <code>…/token</code>) live under the AS metadata path the gateway already serves and would be handled in <code>handle_mcp_request</code> in <code>mcp/auth.rs</code>, next to today's Entra <code>/authorize</code> and <code>/token</code> proxies.</p>
 
 <h2>Scenarios</h2>
 <div class="row" id="tabs"></div>
@@ -332,7 +333,7 @@ function render() {
   $('state').innerHTML = `
     <div class="card"><h3>Claude Code</h3>${kv([['Status', esc(c.status)], ['Expects iss', esc(md?.issuer)], ['Login URL', esc(md ? where(md.authorization_endpoint) : null)], ['Its state', esc(c.state)], ['Has code', c.code ? 'yes' : 'no'], ['Access token', c.token ? esc(`iss=${c.token.iss}`) : 'none']])}</div>
     <div class="card"><h3>Browser</h3>${browser}</div>
-    <div class="card"><h3>Gateway</h3>${kv([['Mode', S.mode === 'proxy' ? 'Option 1 (callback proxy)' : 'Today'], ['Per-login memory', 'none'], ['Redirect check', S.mode === 'proxy' ? (S.gateway.checkRedirect ? 'ON (loopback + allowlist)' : '<b class="bad-t">OFF</b>') : 'n/a'], ['Clock', S.clock + 's']])}</div>
+    <div class="card"><h3>Gateway</h3>${kv([['Runs in', 'agentgateway (same process)'], ['Mode', S.mode === 'proxy' ? 'Option 1 (callback proxy)' : 'Today'], ['Per-login memory', 'none'], ['Redirect check', S.mode === 'proxy' ? (S.gateway.checkRedirect ? 'ON (loopback + allowlist)' : '<b class="bad-t">OFF</b>') : 'n/a'], ['Clock', S.clock + 's']])}</div>
     <div class="card"><h3>Keycloak</h3>${kv([['Allowed redirects', S.idp.registeredRedirects.map(u => esc(where(u))).join('<br>')], ['Codes issued', codes]])}</div>
     <div class="card"><h3>Attacker</h3>${kv([['Holds code', S.attacker.code ? 'yes' : 'no'], ['Holds token', S.attacker.token ? `<b class="bad-t">yes, for ${S.attacker.token.sub}</b>` : 'no']])}</div>`;
   $('note').innerHTML = S.last ? `<div class="note ${S.last.ok ? 'ok' : 'bad'}">${esc(S.last.text)}</div>` : '';
