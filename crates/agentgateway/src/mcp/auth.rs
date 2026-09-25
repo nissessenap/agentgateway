@@ -268,6 +268,9 @@ fn rewrite_authorization_server_issuer(
 		));
 	};
 	metadata.insert("issuer".to_string(), serde_json::Value::String(issuer));
+	// The authorization response goes from the IdP straight to the client, so its RFC 9207 `iss`
+	// is the IdP issuer and can never match the rewritten one. Drop the flag so clients skip the check.
+	metadata.remove("authorization_response_iss_parameter_supported");
 	Ok(())
 }
 
@@ -884,16 +887,45 @@ mod tests {
 	}
 
 	#[test]
+	fn authorization_server_metadata_drops_iss_parameter_support_when_issuer_rewritten() {
+		let mut auth = default_auth();
+		auth.provider = Some(McpIDP::Keycloak {});
+		let req = ::http::Request::builder()
+			.uri("https://gateway.example.com/.well-known/oauth-authorization-server/example/mcp")
+			.body(Body::empty())
+			.expect("request should build");
+		let mut metadata = serde_json::json!({
+			"issuer": "https://idp.example.com",
+			"authorization_response_iss_parameter_supported": true,
+		});
+
+		rewrite_authorization_server_issuer(&req, &auth, &mut metadata)
+			.expect("issuer should be authoritative");
+		assert!(
+			metadata
+				.get("authorization_response_iss_parameter_supported")
+				.is_none()
+		);
+	}
+
+	#[test]
 	fn authorization_server_metadata_preserves_issuer_without_provider() {
 		let req = ::http::Request::builder()
 			.uri("https://gateway.example.com/.well-known/oauth-authorization-server/example/mcp")
 			.body(Body::empty())
 			.expect("request should build");
-		let mut metadata = serde_json::json!({"issuer": "https://idp.example.com"});
+		let mut metadata = serde_json::json!({
+			"issuer": "https://idp.example.com",
+			"authorization_response_iss_parameter_supported": true,
+		});
 
 		rewrite_authorization_server_issuer(&req, &default_auth(), &mut metadata)
 			.expect("metadata should remain valid");
 		assert_eq!(metadata["issuer"], "https://idp.example.com");
+		assert_eq!(
+			metadata["authorization_response_iss_parameter_supported"],
+			true
+		);
 	}
 
 	#[test]
