@@ -95,6 +95,27 @@ pub(crate) async fn handle_mcp_request(
 					.map(Body::new),
 			))
 		},
+		// PROTOTYPE (issue #1 option 1): proxy the authorization round trip for Keycloak.
+		// ponytail: suffix match, so an MCP resource path ending in /token etc. would be shadowed
+		// (same as the Entra arms below).
+		path
+			if matches!(auth.provider, Some(McpIDP::Keycloak { .. }))
+				&& path.starts_with("/.well-known/oauth-authorization-server/")
+				&& (path.ends_with("/authorize")
+					|| path.ends_with("/callback")
+					|| path.ends_with("/token")) =>
+		{
+			Ok(Some(
+				super::prototype_callback_proxy::handle(req, auth, client.clone())
+					.await
+					.map_err(|e| {
+						warn!("callback proxy error: {}", e);
+						StatusCode::INTERNAL_SERVER_ERROR
+					})
+					.into_response()
+					.map(Body::new),
+			))
+		},
 		// Entra rejects the RFC 8707 `resource` parameter (AADSTS9010010), so the gateway
 		// advertises proxied authorization/token endpoints (under the served AS metadata path)
 		// that strip it before forwarding to Entra.
@@ -271,7 +292,7 @@ fn rewrite_authorization_server_issuer(
 	Ok(())
 }
 
-fn issuer_path_from_metadata_path<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+pub(super) fn issuer_path_from_metadata_path<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
 	if let Some(remaining_path) = path.strip_prefix(prefix)
 		&& (remaining_path.is_empty() || remaining_path.starts_with('/'))
 	{
@@ -285,7 +306,7 @@ fn issuer_path_from_metadata_path<'a>(path: &'a str, prefix: &str) -> Option<&'a
 		.or_else(|| path.strip_suffix(&format!("{prefix}/")))
 }
 
-fn uri_with_path(uri: Uri, path: &str) -> String {
+pub(super) fn uri_with_path(uri: Uri, path: &str) -> String {
 	let mut parts = uri.into_parts();
 	let path_and_query = if path.is_empty() {
 		PathAndQuery::from_static("/")
@@ -304,7 +325,7 @@ fn uri_with_path(uri: Uri, path: &str) -> String {
 	}
 }
 
-fn request_uri_for_oauth_metadata(req: &Request) -> Uri {
+pub(super) fn request_uri_for_oauth_metadata(req: &Request) -> Uri {
 	let uri = req
 		.extensions()
 		.get::<filters::OriginalUrl>()
@@ -416,6 +437,18 @@ pub(super) async fn authorization_server_metadata(
 				));
 			};
 			*re = format!("{current_uri}/client-registration");
+
+			// PROTOTYPE (issue #1 option 1): the gateway rewrites `issuer`, so the authorization
+			// response must come from the gateway too. See prototype_callback_proxy.
+			for (key, suffix) in [
+				("authorization_endpoint", "authorize"),
+				("token_endpoint", "token"),
+			] {
+				let Some(serde_json::Value::String(e)) = json::traverse_mut(&mut resp, &[key]) else {
+					return Err(ProxyError::ProcessingString(format!("{key} missing")));
+				};
+				*e = format!("{current_uri}/{suffix}");
+			}
 		},
 		Some(McpIDP::Authentik {}) => {
 			// authentik does not support RFC 8707, and has no audience query parameter workaround.
@@ -760,7 +793,7 @@ async fn build_mock_dcr_response(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
 	use std::sync::Arc;
 
 	use super::*;
@@ -1001,7 +1034,7 @@ mod tests {
 		req
 	}
 
-	fn default_auth() -> McpAuthentication {
+	pub(crate) fn default_auth() -> McpAuthentication {
 		McpAuthentication {
 			issuer: "https://issuer.example.com".to_string(),
 			audiences: vec!["mcp".to_string()],
